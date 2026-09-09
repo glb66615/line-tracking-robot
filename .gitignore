@@ -1,0 +1,30 @@
+# ========== ADS / Eclipse CDT ==========
+Debug/
+Release/
+.settings/
+.ads/
+*.o
+*.d
+*.src
+*.lst
+*.map
+*.mdf
+*.hex
+*.elf
+*.opt
+*.mk
+*.subdir.mk
+*.depend
+
+# ========== 通用 ==========
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ========== 用户编译产物 ==========
+libraries/infineon_libraries/iLLD/TC26B/Tricore/_PinMap/
+libraries/infineon_libraries/iLLD/TC26B/Tricore/_Lib/
