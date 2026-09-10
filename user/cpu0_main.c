@@ -38,6 +38,7 @@
 #include "contro.h"
 #include "track.h"
 #include "ips.h"
+#include "vofa.h"
 #pragma section all "cpu0_dsram"
 
 int core0_main(void)
@@ -47,20 +48,52 @@ int core0_main(void)
 
     // 外设初始化顺序：传感器 → 电机/PWM → 屏幕 → PID/控制
     ips_init();                                     // 屏幕初始化
-    car_init();                                     // 电机 + 编码器
+    car_init();                                     // 电机 + 编码器（内部自检）
+    ips_show_status();                              // 屏幕显示自检结果
     track_init();                                   // 循迹状态机
     control_init();                                 // 转向 PID
 
-    // 控制周期定时器（中断里调 car_update_speed → track_update → control_update）
+    // 5ms 定时中断：始终跑编码器采样；control_enable() 后才跑闭环控制
     pit_ms_init(CCU60_CH0, CONTROL_PERIOD_MS);
 
-    printf("\r\n=== init ok ===\r\n");
+    printf("\r\n");
+    printf("======================================\r\n");
+    printf("  TC264 Grayscale Car - Speed PI Tuning\r\n");
+    printf("======================================\r\n");
+    printf("  cmds (one line + Enter):\r\n");
+    printf("  lp:1.5 li:0.3   L wheel PI\r\n");
+    printf("  rp:1.5 ri:0.3   R wheel PI\r\n");
+    printf("  kp:8 kd:3       steer PD\r\n");
+    printf("  v:30            target speed\r\n");
+    printf("--------------------------------------\r\n");
+    printf("  c = AUTO    x = STOP    p = params\r\n");
+    printf("======================================\r\n");
+    printf("  Waiting command...\r\n");
     cpu_wait_event_ready();
 
     while (TRUE)
     {
-        ips_show_speed();                           // 50ms 刷新屏幕（不跟控制周期同频）
-        system_delay_ms(50);
+        vofa_task();                                 // 串口命令解析（整行）
+
+        // === VOFA JustFloat 实时数据（8通道，按调参用途分组） ===
+        // 速度组 I0~I3（量程 0~60）：目标 vs 实际，调速度PI看这组
+        // PWM组  I4~I5（量程 ±1000）：速度PI输出，看是否顶限幅
+        // 转向组 I6~I7（灰度通了才有数据）
+        {
+            float vofa_ch[8];
+            vofa_ch[0] = (float)control_get_v_target_l();  // I0: 左轮目标速度
+            vofa_ch[1] = (float)car_get_speed_l();         // I1: 左轮实际速度
+            vofa_ch[2] = (float)control_get_v_target_r();  // I2: 右轮目标速度
+            vofa_ch[3] = (float)car_get_speed_r();         // I3: 右轮实际速度
+            vofa_ch[4] = (float)car_get_target_l();        // I4: 左PWM（速度PI输出）
+            vofa_ch[5] = (float)car_get_target_r();        // I5: 右PWM
+            vofa_ch[6] = (float)control_get_delta();       // I6: 差速量Δ（转向PD输出）
+            vofa_ch[7] = (float)track_offset;              // I7: 循迹误差（转向PD输入）
+            vofa_send(vofa_ch, 8);
+        }
+
+        ips_show_speed();                           // 刷新屏幕
+        system_delay_ms(50);                        // 50ms → 20Hz
     }
 }
 

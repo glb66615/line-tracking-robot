@@ -22,16 +22,18 @@
 // 归一化阈值（0~100，高于此值判定为压白线）
 #define GRAY_TH_WHITE           50
 
-// ==================== 电机 PWM（差速车） ====================
-// 逐飞推荐8路PWM中取前2路
-#define MOTOR_LEFT_PWM          ATOM0_CH0_P21_2
-#define MOTOR_RIGHT_PWM         ATOM0_CH1_P21_3
-#define MOTOR_FREQ              10000           // 10kHz
+// ==================== 电机 PWM（DRV8701E 双电机，P11 排针组） ====================
+// 实测标定（2026-09-10）：物理接线左右交叉，已按实测对调
+// P11_11 = 左电机 DIR    P11_12 = 左电机 PWM (ATOM2_CH7)
+// P11_9  = 右电机 DIR    P11_10 = 右电机 PWM (ATOM3_CH5)
+#define MOTOR_LEFT_PWM          ATOM2_CH7_P11_12
+#define MOTOR_RIGHT_PWM         ATOM3_CH5_P11_10
+#define MOTOR_FREQ              17000           // 17kHz（官方示例值）
 #define MOTOR_DUTY_MAX          PWM_DUTY_MAX    // 10000
 
-// 电机方向脚（GPIO输出，0正转1反转）
-#define MOTOR_LEFT_DIR          P21_4
-#define MOTOR_RIGHT_DIR         P21_5
+// 电机方向脚（DIR=HIGH 正转，DIR=LOW 反转）
+#define MOTOR_LEFT_DIR          P11_11
+#define MOTOR_RIGHT_DIR         P11_9
 
 // 电机死区补偿（PWM占空比单位，低于此值电机不动）
 #define MOTOR_DEADZONE          300
@@ -43,29 +45,38 @@
 // #define SERVO_CENTER          375             // 中位
 // #define SERVO_RIGHT           500             // 右极限占空比
 
-// ==================== 编码器（TC264 硬件约束：Port 20 只有 P20_0 和 P20_3 支持 GPT12） ====================
-// 右轮：TIM4 + P02_8(A) + P00_9(B)
-#define ENCODER_RIGHT           TIM4_ENCODER
-#define ENCODER_RIGHT_CH1       TIM4_ENCODER_CH1_P02_8
-#define ENCODER_RIGHT_CH2       TIM4_ENCODER_CH2_P00_9
+// ==================== 编码器（实测标定：物理接线左右交叉，已对调） ====================
+// 左轮：TIM4 + P02_8(A) + P00_9(B)
+//      注意：该编码器前进方向读数为负，car_update_speed() 里已取反使"前进为正"
+#define ENCODER_LEFT            TIM4_ENCODER
+#define ENCODER_LEFT_CH1        TIM4_ENCODER_CH1_P02_8
+#define ENCODER_LEFT_CH2        TIM4_ENCODER_CH2_P00_9
 
-// 左轮：TIM6 + P20_3(A) + P20_0(B)
-//      ↑ 原理图标 B=P20.2 是笔误！TC264 硬件上 P20.2 不连 GPT12，只有 P20.0 能做 TIM6 CH2
-//      ↑ 请确认 B 相物理插头插在 P20.0 排针上
-#define ENCODER_LEFT            TIM6_ENCODER
-#define ENCODER_LEFT_CH1        TIM6_ENCODER_CH1_P20_3
-#define ENCODER_LEFT_CH2        TIM6_ENCODER_CH2_P20_0
+// 右轮：TIM6 + P20_3(A) + P20_0(B)
+// TC264 硬件：Port 20 只有 P20_0/P20_3 支持 GPT12，P20_2 不连编码器
+#define ENCODER_RIGHT           TIM6_ENCODER
+#define ENCODER_RIGHT_CH1       TIM6_ENCODER_CH1_P20_3
+#define ENCODER_RIGHT_CH2       TIM6_ENCODER_CH2_P20_0
 
-// ==================== 转向 PD 控制参数 ====================
+// ==================== 转向 PD 控制参数（外环） ====================
 #define STEER_KP                8               // 比例系数
 #define STEER_KD                3               // 微分系数
-#define STEER_OUT_MAX           5000            // 转向输出限幅
+#define STEER_OUT_MAX           5000            // 转向输出限幅（差速量最大值）
 
-// ==================== 速度档位（占空比百分比 0~100） ====================
-#define SPEED_STRAIGHT          80              // 直道
-#define SPEED_CURVE             60              // 普通弯道
-#define SPEED_ISLAND            40              // 环岛
-#define SPEED_ZEBRA             20              // 斑马线前减速
+// ==================== 速度 PI 控制参数（内环） ====================
+// 串级控制：外环PD算差速量 → 内环PI算PWM
+// 速度环输入: 目标速度(pulse/5ms)  输出: PWM占空比
+#define SPEED_KP_L             1.5f             // 左轮速度PI比例
+#define SPEED_KI_L             0.3f             // 左轮速度PI积分
+#define SPEED_KP_R             1.5f             // 右轮速度PI比例
+#define SPEED_KI_R             0.3f             // 右轮速度PI积分
+#define SPEED_OUT_MAX          1000             // 速度环输出限幅（调试期=10% PWM，安全；调好后再放开到5000）
+
+// ==================== 速度档位（pulse/5ms，送给速度环当目标） ====================
+#define SPEED_STRAIGHT          50              // 直道（调试用小速度）
+#define SPEED_CURVE             40              // 普通弯道
+#define SPEED_ISLAND            30              // 环岛
+#define SPEED_ZEBRA             15              // 斑马线前减速
 #define SPEED_STOP              0               // 停车
 
 // ==================== 赛道元素参数 ====================

@@ -35,6 +35,7 @@
 
 #include "isr_config.h"
 #include "isr.h"
+#include "param.h"
 #include "car.h"
 #include "contro.h"
 #include "track.h"
@@ -49,9 +50,12 @@ IFX_INTERRUPT(cc60_pit_ch0_isr, 0, CCU6_0_CH0_ISR_PRIORITY)
 {
     interrupt_global_enable(0);                     // 开总中断
     pit_clear_flag(CCU60_CH0);
-    car_update_speed();                             // 1. 编码器测速采样
-    track_update();                                 // 2. 循迹误差计算
-    control_update(SPEED_STRAIGHT);                 // 3. PID+差速→car_set_motor (base_speed由track决定后替换)
+    car_update_speed();                             // 1. 编码器测速采样（始终运行）
+    if(control_is_enabled())                        // 2. 自动模式才跑闭环
+    {
+        track_update();                             //    循迹误差计算
+        control_update();                           //    外环PD+内环PI（目标速度由串口设定）
+    }
 }
 
 
