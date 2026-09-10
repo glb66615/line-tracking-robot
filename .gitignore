@@ -28,3 +28,36 @@ Thumbs.db
 # ========== 用户编译产物 ==========
 libraries/infineon_libraries/iLLD/TC26B/Tricore/_PinMap/
 libraries/infineon_libraries/iLLD/TC26B/Tricore/_Lib/
+
+# ========== Object / Linker / Executable (来自 GitHub 默认模板) ==========
+*.ko
+*.obj
+*.ilk
+*.exp
+*.gch
+*.pch
+*.lib
+*.a
+*.la
+*.lo
+*.dll
+*.so
+*.so.*
+*.dylib
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.dSYM/
+*.su
+*.idb
+*.pdb
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+*.dwo
