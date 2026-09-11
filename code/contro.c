@@ -10,7 +10,10 @@ static PID_t speed_pid_l;      // 内环：左轮速度 PI
 static PID_t speed_pid_r;      // 内环：右轮速度 PI
 
 // ==================== 状态缓存（VOFA/屏幕显示用） ====================
-static int16 base_target = SPEED_STRAIGHT;  // 串口设定的目标速度
+static int16 base_target = SPEED_STRAIGHT;  // 统一目标（循迹模式用）
+static int16 v_target_l_direct = 0;         // 独立左轮目标（手动模式用）
+static int16 v_target_r_direct = 0;         // 独立右轮目标
+static uint8 direct_mode = 0;               // 0=循迹(base+Δ)  1=独立目标(vl,vr)
 static int16 v_target_l = 0;
 static int16 v_target_r = 0;
 static int16 v_actual_l = 0;
@@ -50,8 +53,18 @@ void control_update(void)
     delta_out = (int16)steer;
 
     // ============ 差速合成 ============
-    v_target_l = base_target + (int16)steer;
-    v_target_r = base_target - (int16)steer;
+    if(direct_mode)
+    {
+        // 手动模式：用独立左右轮目标
+        v_target_l = v_target_l_direct;
+        v_target_r = v_target_r_direct;
+    }
+    else
+    {
+        // 循迹模式：base_target + 转向PD的差速
+        v_target_l = base_target + (int16)steer;
+        v_target_r = base_target - (int16)steer;
+    }
 
     // ============ 内环：速度 PI（左右独立） ============
     v_actual_l = car_get_speed_l();
@@ -67,8 +80,15 @@ void control_update(void)
 }
 
 // ==================== 串口在线调参接口 ====================
-void  control_set_base_target(int16 v) { base_target = v; }
+// 统一目标（循迹模式用，左右轮自动加差速）
+void  control_set_base_target(int16 v) { base_target = v; direct_mode = 0; }
 int16 control_get_base_target(void)   { return base_target; }
+
+// 独立左右轮目标（手动调试用，不经过转向PD）
+void  control_set_target_l(int16 v) { v_target_l_direct = v; direct_mode = 1; }
+void  control_set_target_r(int16 v) { v_target_r_direct = v; direct_mode = 1; }
+int16 control_get_target_l(void)    { return v_target_l_direct; }
+int16 control_get_target_r(void)    { return v_target_r_direct; }
 
 void control_set_steer_kp(float kp) { steer_pid.kp = kp; }
 void control_set_steer_kd(float kd) { steer_pid.kd = kd; }
@@ -84,11 +104,7 @@ float control_get_speed_ki_l(void) { return speed_pid_l.ki; }
 float control_get_speed_kp_r(void) { return speed_pid_r.kp; }
 float control_get_speed_ki_r(void) { return speed_pid_r.ki; }
 
-// ==================== VOFA 监测接口 ====================
+// ==================== VOFA/屏幕 监测接口 ====================
 int16 control_get_v_target_l(void) { return v_target_l; }
 int16 control_get_v_target_r(void) { return v_target_r; }
-int16 control_get_v_actual_l(void) { return v_actual_l; }
-int16 control_get_v_actual_r(void) { return v_actual_r; }
-int16 control_get_pwm_l(void)       { return pwm_out_l; }
-int16 control_get_pwm_r(void)       { return pwm_out_r; }
 int16 control_get_delta(void)       { return delta_out; }

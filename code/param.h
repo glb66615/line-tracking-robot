@@ -70,7 +70,7 @@
 #define SPEED_KI_L             0.3f             // 左轮速度PI积分
 #define SPEED_KP_R             1.5f             // 右轮速度PI比例
 #define SPEED_KI_R             0.3f             // 右轮速度PI积分
-#define SPEED_OUT_MAX          1000             // 速度环输出限幅（调试期=10% PWM，安全；调好后再放开到5000）
+#define SPEED_OUT_MAX          5000             // 速度环输出限幅（50% PWM）
 
 // ==================== 速度档位（pulse/5ms，送给速度环当目标） ====================
 #define SPEED_STRAIGHT          50              // 直道（调试用小速度）

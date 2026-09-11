@@ -60,17 +60,15 @@ int core0_main(void)
     printf("======================================\r\n");
     printf("  TC264 Grayscale Car - Speed PI Tuning\r\n");
     printf("======================================\r\n");
-    printf("  cmds (one line + Enter):\r\n");
-    printf("  lp:1.5 li:0.3   L wheel PI\r\n");
-    printf("  rp:1.5 ri:0.3   R wheel PI\r\n");
-    printf("  kp:8 kd:3       steer PD\r\n");
-    printf("  v:30            target speed\r\n");
+    printf("  send ONE line (auto starts):\r\n");
+    printf("  lp1.5 li0.3 rp1.5 ri0.3 kp8 kd3 v30\r\n");
     printf("--------------------------------------\r\n");
-    printf("  c = AUTO    x = STOP    p = params\r\n");
+    printf("  x = STOP    p = show params\r\n");
     printf("======================================\r\n");
     printf("  Waiting command...\r\n");
     cpu_wait_event_ready();
 
+    uint8 screen_div = 0;
     while (TRUE)
     {
         vofa_task();                                 // 串口命令解析（整行）
@@ -92,8 +90,8 @@ int core0_main(void)
             vofa_send(vofa_ch, 8);
         }
 
-        ips_show_speed();                           // 刷新屏幕
-        system_delay_ms(50);                        // 50ms → 20Hz
+        if(++screen_div >= 20) { screen_div = 0; ips_show_speed(); }  // 每200ms刷一次屏幕
+        system_delay_ms(10);                        // 10ms → 100Hz
     }
 }
 

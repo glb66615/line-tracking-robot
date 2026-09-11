@@ -5,6 +5,7 @@
 #include "stdio.h"
 #include "string.h"
 #include "zf_common_debug.h"
+#include "zf_common_function.h"
 #include "zf_driver_uart.h"
 
 // JustFloat 帧尾
@@ -16,109 +17,153 @@ void vofa_send(float *ch, uint8 n)
     uart_write_buffer(UART_0, vofa_tail, 4);
 }
 
-// ==================== 行缓冲串口命令解析 ====================
-// 收到 '\r' 或 '\n' 视为一行结束，解析整串命令
+// ==================== 串口命令解析（VOFA+ 滑块格式） ====================
 //
-// 命令表（VOFA发送框输入整串，发送时带换行 \n）:
-//   键值对（可任意组合，空格分隔，只更新出现的项）:
-//     lp:1.5 li:0.3     左轮速度 PI: Kp Ki
-//     rp:1.5 ri:0.3     右轮速度 PI: Kp Ki
-//     kp:8  kd:3        转向 PD:    Kp Kd
-//     v:30              目标速度 (pulse/5ms)
-//   示例: lp:1.5 li:0.3 v:30
+// 统一格式: key%f\r\n  → VOFA 命令控件自动替换 %f 为滑块值
 //
-//   单字符:
-//     c    启动 AUTO（速度+转向闭环）
-//     x    停车回 MANUAL
-//     p    打印当前全部参数
+//   lp%f   → lp1.5      左轮速度PI Kp
+//   li%f   → li0.3      左轮速度PI Ki
+//   rp%f   → rp1.5      右轮速度PI Kp
+//   ri%f   → ri0.3      右轮速度PI Ki
+//   kp%f   → kp8        转向PD Kp
+//   kd%f   → kd3        转向PD Kd
+//   v%f    → v30        目标速度(pulse/5ms)
+//
+// 手动输入也直接敲 lp1.5，不带冒号
+// 发完自动启动闭环
+//   x = 停车    p = 打印当前全部参数
+
 #define CMD_BUF_LEN     48
 static char cmd_buf[CMD_BUF_LEN];
 static uint8 cmd_idx = 0;
 
-// 从命令串里找 "key:" 后面的浮点数，找到返回1
+// 手写浮点数解析（不依赖 sscanf %f，支持负号和小数）
+static float parse_float(const char *s)
+{
+    float val = 0.0f, digit_w = 0.1f;
+    uint8 neg = 0, in_frac = 0;
+
+    while(*s == ' ' || *s == '\t') s++;
+    if(*s == '-') { neg = 1; s++; }
+    else if(*s == '+') s++;
+
+    while(1)
+    {
+        if(*s >= '0' && *s <= '9')
+        {
+            if(!in_frac) { val = val * 10.0f + (float)(*s - '0'); }
+            else         { val += (float)(*s - '0') * digit_w; digit_w *= 0.1f; }
+            s++;
+        }
+        else if(*s == '.' && !in_frac) { in_frac = 1; s++; }
+        else break;
+    }
+    return neg ? -val : val;
+}
+
+// 在命令串里找 "key" 后面直接跟数值（VOFA 滑块格式 "kp1.5"）
+// key 后必须紧跟数字/负号/小数点，防止 "kp" 匹配到 "kpvalue"
 static int get_val(const char *s, const char *key, float *val)
 {
     const char *p = strstr(s, key);
-    if(p && sscanf(p + strlen(key), "%f", val) == 1)
-        return 1;
+    if(p)
+    {
+        const char *q = p + strlen(key);
+        if(*q == '-' || *q == '+' || *q == '.' || (*q >= '0' && *q <= '9'))
+        {
+            *val = parse_float(q);
+            return 1;
+        }
+    }
     return 0;
 }
 
 static void cmd_exec(char *s)
 {
-    // 单字符命令
-    if(s[0] == 'c' && s[1] == '\0')
-    {
-        control_enable();
-        printf("[MODE] AUTO\r\n");
-        return;
-    }
+    float f;
+    uint8 hit = 0;
+
+    // === 单字符命令 ===
     if(s[0] == 'x' && s[1] == '\0')
     {
         control_disable();
         car_stop();
-        printf("[MODE] MANUAL / STOP\r\n");
-        return;
-    }
-    if(s[0] == 'p' && s[1] == '\0')
-    {
-        printf("===== PARAMS =====\r\n");
-        printf("mode  : %s\r\n", control_is_enabled() ? "AUTO" : "MANUAL");
-        printf("target: %d pulse/5ms\r\n", control_get_base_target());
-        printf("L-PI  : Kp=%.2f Ki=%.2f\r\n", control_get_speed_kp_l(), control_get_speed_ki_l());
-        printf("R-PI  : Kp=%.2f Ki=%.2f\r\n", control_get_speed_kp_r(), control_get_speed_ki_r());
-        printf("STEER : Kp=%.2f Kd=%.2f\r\n", control_get_steer_kp(), control_get_steer_kd());
-        printf("==================\r\n");
         return;
     }
 
-    // 键值对命令（任意组合）
-    float f;
-    uint8 hit = 0;
-    if(get_val(s, "lp:", &f)) { control_set_speed_kp_l(f); hit = 1; }
-    if(get_val(s, "li:", &f)) { control_set_speed_ki_l(f); hit = 1; }
-    if(get_val(s, "rp:", &f)) { control_set_speed_kp_r(f); hit = 1; }
-    if(get_val(s, "ri:", &f)) { control_set_speed_ki_r(f); hit = 1; }
-    if(get_val(s, "kp:", &f)) { control_set_steer_kp(f);  hit = 1; }
-    if(get_val(s, "kd:", &f)) { control_set_steer_kd(f);  hit = 1; }
-    if(get_val(s, "v:",  &f)) { control_set_base_target((int16)f); hit = 1; }
+    // === VOFA 滑块格式 ===
+    if(get_val(s, "lp", &f)) { control_set_speed_kp_l(f); hit = 1; }
+    if(get_val(s, "li", &f)) { control_set_speed_ki_l(f); hit = 1; }
+    if(get_val(s, "rp", &f)) { control_set_speed_kp_r(f); hit = 1; }
+    if(get_val(s, "ri", &f)) { control_set_speed_ki_r(f); hit = 1; }
+    if(get_val(s, "kp", &f)) { control_set_steer_kp(f);  hit = 1; }
+    if(get_val(s, "kd", &f)) { control_set_steer_kd(f);  hit = 1; }
+    if(get_val(s, "v",  &f)) { control_set_base_target((int16)f); hit = 1; }
+    if(get_val(s, "vl", &f)) { control_set_target_l((int16)f); hit = 1; }
+    if(get_val(s, "vr", &f)) { control_set_target_r((int16)f); hit = 1; }
 
-    if(hit)
+    if(hit && !control_is_enabled()) control_enable();
+}
+
+// 往命令缓冲追加一个字符，遇到换行符就执行一帧
+// 返回1表示这帧已执行
+static uint8 cmd_feed(char c)
+{
+    if(c == '\r' || c == '\n')
     {
-        printf("[OK] L-PI Kp=%.2f Ki=%.2f | R-PI Kp=%.2f Ki=%.2f | STEER Kp=%.2f Kd=%.2f | v=%d\r\n",
-               control_get_speed_kp_l(), control_get_speed_ki_l(),
-               control_get_speed_kp_r(), control_get_speed_ki_r(),
-               control_get_steer_kp(), control_get_steer_kd(),
-               control_get_base_target());
+        if(cmd_idx > 0)
+        {
+            cmd_buf[cmd_idx] = '\0';
+            cmd_exec(cmd_buf);
+            cmd_idx = 0;
+            return 1;
+        }
+        return 0;
+    }
+
+    if(cmd_idx < CMD_BUF_LEN - 1)
+    {
+        // 统一转小写（命令大小写不敏感）
+        if(c >= 'A' && c <= 'Z') c = c + 32;
+        cmd_buf[cmd_idx++] = c;
     }
     else
     {
-        printf("[ERR] unknown cmd: %s\r\n", s);
+        cmd_idx = 0;  // 缓冲满，丢弃重来
     }
+    return 0;
 }
 
-/* 在 while(1) 里循环调，非阻塞，逐字节收满一行后解析 */
+/* 在 while(1) 里循环调，非阻塞
+ * 不依赖发送方带换行符：收完一段后短暂等待确认无后续字节，就当作一帧执行
+ */
 void vofa_task(void)
 {
     uint8 ch;
+    uint8 got = 0;
+
+    // 先把缓冲区已有的字节全部读走
     while(debug_read_ring_buffer(&ch, 1) == 1)
     {
-        if(ch == '\r' || ch == '\n')
+        if(cmd_feed((char)ch)) return;
+        got = 1;
+    }
+
+    // 收到过内容但没遇到换行符 → 轮询等待尾部字节（发送方可能不带 \n）
+    if(got && cmd_idx > 0)
+    {
+        uint8 retry;
+        for(retry = 0; retry < 5; retry++)
         {
-            if(cmd_idx > 0)
+            func_soft_delay(20000);      // 短暂空转等字节
+            while(debug_read_ring_buffer(&ch, 1) == 1)
             {
-                cmd_buf[cmd_idx] = '\0';
-                cmd_exec(cmd_buf);
-                cmd_idx = 0;
+                if(cmd_feed((char)ch)) return;
             }
         }
-        else if(cmd_idx < CMD_BUF_LEN - 1)
-        {
-            cmd_buf[cmd_idx++] = (char)ch;
-        }
-        else  // 缓冲满，丢弃重来
-        {
-            cmd_idx = 0;
-        }
+        // 等了几轮都没有新字节，认定一帧结束，强制执行
+        cmd_buf[cmd_idx] = '\0';
+        cmd_exec(cmd_buf);
+        cmd_idx = 0;
     }
 }

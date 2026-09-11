@@ -9,15 +9,16 @@
 void vofa_send(float *ch, uint8 n);
 
 /* 串口命令任务：while(1) 里循环调，非阻塞
- * 整行命令（发送时带换行 \n），键值对可任意组合:
+ * VOFA+ 滑块格式 key%f\r\n，任意组合、大小写不敏感、带不带换行都行，发完自动启动:
  *
- *   lp:1.5 li:0.3     左轮速度 PI: Kp Ki
- *   rp:1.5 ri:0.3     右轮速度 PI: Kp Ki
- *   kp:8  kd:3        转向 PD:    Kp Kd
- *   v:30              目标速度 (pulse/5ms)
- *   示例: lp:1.5 li:0.3 v:30
+ *   lp1.5 li0.3 rp1.5 ri0.3 kp8 kd3 v30
  *
- *   c    启动 AUTO    x = 停车    p = 打印参数
+ *   lp/li  左轮速度 PI 的 Kp / Ki
+ *   rp/ri  右轮速度 PI 的 Kp / Ki
+ *   kp/kd  转向 PD 的 Kp / Kd
+ *   v      目标速度 (pulse/5ms)
+ *
+ *   x = 停车    p = 打印参数
  */
 void vofa_task(void);
 

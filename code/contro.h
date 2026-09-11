@@ -24,9 +24,15 @@ void  control_disable(void);
 uint8 control_is_enabled(void);
 
 // ==================== 串口在线调参接口 ====================
-// 目标速度（pulse/5ms）
+// 统一目标速度（循迹模式：左右轮 = v ± 转向差速）
 void  control_set_base_target(int16 v);
 int16 control_get_base_target(void);
+
+// 独立左右轮目标（手动调试模式：直接指定，不经过转向PD）
+void  control_set_target_l(int16 v);
+void  control_set_target_r(int16 v);
+int16 control_get_target_l(void);
+int16 control_get_target_r(void);
 
 // 转向 PD（外环）
 void control_set_steer_kp(float kp);
@@ -44,13 +50,9 @@ float control_get_speed_ki_r(void);
 float control_get_steer_kp(void);
 float control_get_steer_kd(void);
 
-// ==================== VOFA 监测接口 ====================
+// ==================== VOFA/屏幕 监测接口 ====================
 int16 control_get_v_target_l(void);    // 左轮目标速度
 int16 control_get_v_target_r(void);    // 右轮目标速度
-int16 control_get_v_actual_l(void);    // 左轮实际速度（编码器）
-int16 control_get_v_actual_r(void);    // 右轮实际速度
-int16 control_get_pwm_l(void);         // 速度PI输出PWM（左）
-int16 control_get_pwm_r(void);         // 速度PI输出PWM（右）
 int16 control_get_delta(void);         // 转向PD输出（差速量）
 
 #endif
