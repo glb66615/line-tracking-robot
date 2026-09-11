@@ -37,6 +37,7 @@
 #include "car.h"
 #include "contro.h"
 #include "track.h"
+#include "gray_sensor.h"
 #include "ips.h"
 #include "vofa.h"
 #pragma section all "cpu0_dsram"
@@ -48,6 +49,7 @@ int core0_main(void)
 
     // 外设初始化顺序：传感器 → 电机/PWM → 屏幕 → PID/控制
     ips_init();                                     // 屏幕初始化
+    gray_init();                                    // 灰度传感器（串口帧解析）
     car_init();                                     // 电机 + 编码器（内部自检）
     ips_show_status();                              // 屏幕显示自检结果
     track_init();                                   // 循迹状态机
