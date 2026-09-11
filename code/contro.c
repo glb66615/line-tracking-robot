@@ -49,9 +49,12 @@ void control_update(void)
     float steer = pid_inc(&steer_pid, error);
     delta_out = (int16)steer;
 
-    // ============ 差速合成 ============
-    v_target_l = base_target + (int16)steer;
-    v_target_r = base_target - (int16)steer;
+    // ============ 差速合成（含赛道限速） ============
+    // 实际基础速度 = 串口设定 base_target × track_speed_limit(0~100) / 100
+    // 斑马线停车/减速、弯道/环岛限速都通过 track_speed_limit 生效
+    int16 base = (int16)(((int32)base_target * track_speed_limit) / 100);
+    v_target_l = base + (int16)steer;
+    v_target_r = base - (int16)steer;
 
     // ============ 内环：速度 PI（左右独立） ============
     v_actual_l = car_get_speed_l();
