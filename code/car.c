@@ -2,11 +2,22 @@
 #include "param.h"
 #include "zf_common_debug.h"   // debug_send_buffer
 
-// 编码器速度缓存（5ms采样一次，单位：每5ms脉冲数）
-static int16 car_speed_l = 0;
+// 编码器速度缓存（5ms采样一次）
+static int16 car_speed_l = 0;      // 归一化后（转速百分比 0~100，给PID/显示）
 static int16 car_speed_r = 0;
+static int16 car_raw_l = 0;        // 原始脉冲数/5ms（底层调试用，未缩放）
+static int16 car_raw_r = 0;
 
-// 目标速度缓存（car_set_motor 设置的 PWM 值，带符号）
+// 编码器累积脉冲（从上电开始累加，用于测距/里程）
+static int32 car_accum_l = 0;
+static int32 car_accum_r = 0;
+
+// 编码器一阶低通滤波（平滑脉冲读数，alpha越大越平滑但滞后越大）
+static int32 raw_l_filtered = 0;
+static int32 raw_r_filtered = 0;
+#define ENC_FILTER_ALPHA    4   // 0~16，4≈0.25（25%新值+75%旧值）
+
+// 目标速度缓存（car_set_motor 设置的 PWM 绝对值，带符号；显示时÷PWM_PCT_SCALE）
 static int16 car_target_l = 0;
 static int16 car_target_r = 0;
 
@@ -50,11 +61,10 @@ void car_set_motor(int16 left, int16 right)
     if(right >= 0) { gpio_set_level(MOTOR_RIGHT_DIR, GPIO_HIGH); }
     else           { gpio_set_level(MOTOR_RIGHT_DIR, GPIO_LOW);  right = -right; }
 
-    // 死区
-    if(left  < MOTOR_DEADZONE)  left  = 0;
-    if(right < MOTOR_DEADZONE)  right = 0;
+    // 无死区补偿：PWM连续输出，避免小信号时0↔死区跳变造成极限环振荡
+    // 电机自然死区(PWM<1200不动)由前馈Kff托住正常速度，低速不响应可接受
 
-    // 限幅
+    // 限幅（防超PWM满量程）
     if(left  > MOTOR_DUTY_MAX)  left  = MOTOR_DUTY_MAX;
     if(right > MOTOR_DUTY_MAX)  right = MOTOR_DUTY_MAX;
 
@@ -74,13 +84,40 @@ void car_stop(void)
 void car_update_speed(void)
 {
     // 左轮编码器(TIM4)实测前进读数为负，取反统一为"前进为正，后退为负"
-    car_speed_l = -encoder_get_count(ENCODER_LEFT);
-    car_speed_r =  encoder_get_count(ENCODER_RIGHT);
+    int32 raw_l = -encoder_get_count(ENCODER_LEFT);
+    int32 raw_r =  encoder_get_count(ENCODER_RIGHT);
+    car_raw_l = (int16)raw_l;   // 原始值存给VOFA底层观察
+    car_raw_r = (int16)raw_r;
+
+    // 累积脉冲（前进为正，后退为负）
+    car_accum_l += raw_l;
+    car_accum_r += raw_r;
+
+    // 一阶低通滤波：filtered += alpha * (raw - filtered) / 16
+    // 平滑脉冲跳变，让速度读数更稳定
+    raw_l_filtered += (raw_l - raw_l_filtered) * ENC_FILTER_ALPHA / 16;
+    raw_r_filtered += (raw_r - raw_r_filtered) * ENC_FILTER_ALPHA / 16;
+
+    // 归一化到 0~SPEED_FULL_SCALE（百分比 0~100），用int32中间值防异常脉冲溢出
+    int32 s_l = raw_l_filtered * SPEED_FULL_SCALE / SPEED_RAW_FULLSCALE;
+    int32 s_r = raw_r_filtered * SPEED_FULL_SCALE / SPEED_RAW_FULLSCALE;
+    // 限幅：允许±150%的瞬时过冲，但防止异常脉冲把int16冲爆
+    if(s_l >  150) s_l =  150;
+    if(s_l < -150) s_l = -150;
+    if(s_r >  150) s_r =  150;
+    if(s_r < -150) s_r = -150;
+
+    car_speed_l = (int16)s_l;
+    car_speed_r = (int16)s_r;
     encoder_clear_count(ENCODER_LEFT);
     encoder_clear_count(ENCODER_RIGHT);
 }
 
 int16 car_get_speed_l(void) { return car_speed_l; }
 int16 car_get_speed_r(void) { return car_speed_r; }
+int16 car_get_raw_l(void)   { return car_raw_l; }
+int16 car_get_raw_r(void)   { return car_raw_r; }
 int16 car_get_target_l(void) { return car_target_l; }
 int16 car_get_target_r(void) { return car_target_r; }
+int32 car_get_accum_l(void)  { return car_accum_l; }
+int32 car_get_accum_r(void)  { return car_accum_r; }

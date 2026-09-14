@@ -39,6 +39,7 @@
 #include "car.h"
 #include "contro.h"
 #include "track.h"
+#include "vofa.h"
 
 // ����TCϵ��Ĭ���ǲ�֧���ж�Ƕ�׵ģ�ϣ��֧���ж�Ƕ����Ҫ���ж���ʹ�� interrupt_global_enable(0); �������ж�Ƕ��
 // �򵥵�˵ʵ���Ͻ����жϺ�TCϵ�е�Ӳ���Զ������� interrupt_global_disable(); ���ܾ���Ӧ�κε��жϣ������Ҫ�����Լ��ֶ����� interrupt_global_enable(0); �������жϵ���Ӧ��
@@ -46,12 +47,16 @@
 
 
 // **************************** PIT定时器中断 ****************************
+volatile uint32 g_pit_5ms_cnt = 0;                  // 5ms 节拍计数（IMU 中断限速用，imu 模块可读）
+
 IFX_INTERRUPT(cc60_pit_ch0_isr, 0, CCU6_0_CH0_ISR_PRIORITY)
 {
     interrupt_global_enable(0);                     // 开总中断
     pit_clear_flag(CCU60_CH0);
+    g_pit_5ms_cnt++;                                // 5ms 节拍计数
     car_update_speed();                             // 1. 编码器测速采样（始终运行）
-    if(control_is_enabled())                        // 2. 自动模式才跑闭环
+    vofa_pit_tick();                                // 2. VOFA 帧率节拍：5ms×2 = 10ms/帧
+    if(control_is_enabled())                        // 3. 自动模式才跑闭环
     {
         track_update();                             //    循迹误差计算
         control_update();                           //    外环PD+内环PI（目标速度由串口设定）
@@ -59,6 +64,28 @@ IFX_INTERRUPT(cc60_pit_ch0_isr, 0, CCU6_0_CH0_ISR_PRIORITY)
 }
 
 
+
+// **************************** 外部中断函数 ****************************
+// IMU660RC INT2 (P15_4, ERU通道0)：120Hz 四元数就绪中断，写法与官方例程一致
+static uint32 imu_last_cb_cnt = 0;                  // 上次 callback 时的 5ms 计数
+
+IFX_INTERRUPT(exti_ch0_ch4_isr, 0, EXTI_CH0_CH4_INT_PRIO)
+{
+    interrupt_global_enable(0);                     // 开中断嵌套
+
+    if(exti_flag_get(ERU_CH0_REQ0_P15_4))
+    {
+        exti_flag_clear(ERU_CH0_REQ0_P15_4);
+        // 限速闸门：INT2 线接触不良/受电机干扰时会高频抖动 → 中断风暴饿死主循环，
+        // 表现为串口假死、命令无响应。同一 5ms 窗口最多执行一次 callback。
+        // 芯片 120Hz 周期 8.3ms > 5ms，正常数据不受影响；风暴被限到最多 200 次/秒（约1% CPU）。
+        if(g_pit_5ms_cnt != imu_last_cb_cnt)
+        {
+            imu_last_cb_cnt = g_pit_5ms_cnt;
+            imu660rc_callback();                     // 中断内采集四元数+加速度+陀螺仪
+        }
+    }
+}
 
 IFX_INTERRUPT(cc60_pit_ch1_isr, 0, CCU6_0_CH1_ISR_PRIORITY)
 {
@@ -254,11 +281,12 @@ IFX_INTERRUPT(uart2_tx_isr, 0, UART2_TX_INT_PRIO)
 
 IFX_INTERRUPT(uart2_rx_isr, 0, UART2_RX_INT_PRIO)
 {
-    interrupt_global_enable(0);                     // �����ж�Ƕ��
-    wireless_module_uart_handler();                 // ����ģ��ͳһ�ص�����
-
-
-
+    interrupt_global_enable(0);                     // 开总中断
+    uint8 ch;
+    while(uart_query_byte(UART_2, &ch))
+    {
+        wireless_rx_push(ch);                       // 只入队，主循环解析（printf等重活不能放ISR）
+    }
 }
 // ����3Ĭ�����ӵ�GPS��λģ��
 IFX_INTERRUPT(uart3_tx_isr, 0, UART3_TX_INT_PRIO)

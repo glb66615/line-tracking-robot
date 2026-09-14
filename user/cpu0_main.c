@@ -35,20 +35,24 @@
 #include "zf_common_headfile.h"
 #include "param.h"
 #include "car.h"
+#include "fan.h"
 #include "contro.h"
 #include "track.h"
 #include "ips.h"
 #include "vofa.h"
+#include "imu660.h"
 #pragma section all "cpu0_dsram"
 
 int core0_main(void)
 {
     clock_init();
-    debug_init();
+    wireless_init();                                // 无线串口 UART2 必须最先初始化（printf 已重定向到 UART2）
 
-    // 外设初始化顺序：传感器 → 电机/PWM → 屏幕 → PID/控制
+    // 外设初始化顺序：无线串口 → 传感器 → 电机/PWM → 屏幕 → PID/控制
     ips_init();                                     // 屏幕初始化
     car_init();                                     // 电机 + 编码器（内部自检）
+    fan_init();                                     // 负压风扇 PWM（P21_2，50Hz 伺服协议）+ 按键
+    imu_init();                                     // IMU660RC 官方驱动（硬件SPI0：SPC=P20_11 SDI=P20_14 SDO=P20_12 CS=P20_13，INT2=P15_4 四元数120Hz，内部重试）
     ips_show_status();                              // 屏幕显示自检结果
     track_init();                                   // 循迹状态机
     control_init();                                 // 转向 PID
@@ -56,37 +60,67 @@ int core0_main(void)
     // 5ms 定时中断：始终跑编码器采样；control_enable() 后才跑闭环控制
     pit_ms_init(CCU60_CH0, CONTROL_PERIOD_MS);
 
-    printf("\r\n");
-    printf("======================================\r\n");
-    printf("  TC264 Grayscale Car - Speed PI Tuning\r\n");
-    printf("======================================\r\n");
-    printf("  send ONE line (auto starts):\r\n");
-    printf("  lp1.5 li0.3 rp1.5 ri0.3 kp8 kd3 v30\r\n");
-    printf("--------------------------------------\r\n");
-    printf("  x = STOP    p = show params\r\n");
-    printf("======================================\r\n");
-    printf("  Waiting command...\r\n");
     cpu_wait_event_ready();
 
     uint8 screen_div = 0;
+    imu_data_t imu;
     while (TRUE)
     {
-        vofa_task();                                 // 串口命令解析（整行）
+        wireless_task();                             // 无线 UART2 命令解析（唯一命令入口）
+        fan_update();                                // 风扇软启动渐变推进（每帧一步）
+        fan_key_update();                            // 风扇按键检测（开 P20_7 / 停 P20_6）
+        imu_read_all(&imu);                          // 读 IMU 数据（每帧一次）
 
-        // === VOFA JustFloat 实时数据（8通道，按调参用途分组） ===
-        // 速度组 I0~I3（量程 0~60）：目标 vs 实际，调速度PI看这组
-        // PWM组  I4~I5（量程 ±1000）：速度PI输出，看是否顶限幅
-        // 转向组 I6~I7（灰度通了才有数据）
+        // === VOFA JustFloat 实时数据 ===
+        // 帧率由 5ms PIT 分频控制：精确 10ms/帧（100Hz），不受主循环耗时波动影响
+        // 上电默认不发，收到 ms/ma/md/me 指令后才开始发数据
+        if(vofa_send_due() && vofa_is_active())
         {
             float vofa_ch[8];
-            vofa_ch[0] = (float)control_get_v_target_l();  // I0: 左轮目标速度
-            vofa_ch[1] = (float)car_get_speed_l();         // I1: 左轮实际速度
-            vofa_ch[2] = (float)control_get_v_target_r();  // I2: 右轮目标速度
-            vofa_ch[3] = (float)car_get_speed_r();         // I3: 右轮实际速度
-            vofa_ch[4] = (float)car_get_target_l();        // I4: 左PWM（速度PI输出）
-            vofa_ch[5] = (float)car_get_target_r();        // I5: 右PWM
-            vofa_ch[6] = (float)control_get_delta();       // I6: 差速量Δ（转向PD输出）
-            vofa_ch[7] = (float)track_offset;              // I7: 循迹误差（转向PD输入）
+            if(vofa_get_mode() == 0)   // MODE_SPEED
+            {
+                vofa_ch[0] = (float)control_get_v_target_l();
+                vofa_ch[1] = (float)car_get_speed_l();
+                vofa_ch[2] = (float)control_get_v_target_r();
+                vofa_ch[3] = (float)car_get_speed_r();
+                vofa_ch[4] = (float)car_get_target_l() / PWM_PCT_SCALE;
+                vofa_ch[5] = (float)car_get_target_r() / PWM_PCT_SCALE;
+                vofa_ch[6] = (float)car_get_raw_l();
+                vofa_ch[7] = (float)car_get_raw_r();
+            }
+            else if(vofa_get_mode() == 1)  // MODE_IMU
+            {
+                vofa_ch[0] = imu.gyro_x;
+                vofa_ch[1] = imu.gyro_y;
+                vofa_ch[2] = imu.gyro_z;
+                vofa_ch[3] = imu.accel_x;
+                vofa_ch[4] = imu.accel_y;
+                vofa_ch[5] = imu.accel_z;
+                vofa_ch[6] = imu.temp;
+                vofa_ch[7] = 0.0f;
+            }
+            else if(vofa_get_mode() == 2)  // MODE_DIR：定角转向环调试
+            {
+                vofa_ch[0] = control_get_yaw_target();   // I0: 目标yaw（°）
+                vofa_ch[1] = imu.yaw;                    // I1: 当前yaw（°）
+                vofa_ch[2] = control_get_yaw_error();    // I2: 角度误差（±180°）
+                vofa_ch[3] = imu.gyro_z;                 // I3: 陀螺仪z轴角速度（°/s）
+                vofa_ch[4] = (float)control_get_delta(); // I4: 转向差速输出（±100）
+                vofa_ch[5] = (float)control_get_base_target(); // I5: 基础速度%
+                vofa_ch[6] = (float)car_get_speed_l();   // I6: 左轮实际速度%
+                vofa_ch[7] = (float)car_get_speed_r();   // I7: 右轮实际速度%
+            }
+            else  // MODE_ENCODER (3)
+            {
+                vofa_ch[0] = (float)car_get_accum_l();    // I0: 左轮累积脉冲
+                vofa_ch[1] = (float)car_get_accum_r();    // I1: 右轮累积脉冲
+                vofa_ch[2] = (float)car_get_raw_l();       // I2: 左轮瞬时脉冲/5ms
+                vofa_ch[3] = (float)car_get_raw_r();       // I3: 右轮瞬时脉冲/5ms
+                vofa_ch[4] = (float)car_get_speed_l();     // I4: 左轮速度%
+                vofa_ch[5] = (float)car_get_speed_r();     // I5: 右轮速度%
+                vofa_ch[6] = 0.0f;                          // I6: 保留
+                vofa_ch[7] = 0.0f;                          // I7: 保留
+            }
             vofa_send(vofa_ch, 8);
         }
 

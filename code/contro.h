@@ -41,12 +41,16 @@ void control_set_steer_kd(float kd);
 // 速度 PI（内环）—— 左右独立设置
 void control_set_speed_kp_l(float kp);
 void control_set_speed_ki_l(float ki);
+void control_set_speed_kff_l(float kff);   // 前馈系数
 void control_set_speed_kp_r(float kp);
 void control_set_speed_ki_r(float ki);
+void control_set_speed_kff_r(float kff);
 float control_get_speed_kp_l(void);
 float control_get_speed_ki_l(void);
+float control_get_speed_kff_l(void);
 float control_get_speed_kp_r(void);
 float control_get_speed_ki_r(void);
+float control_get_speed_kff_r(void);
 float control_get_steer_kp(void);
 float control_get_steer_kd(void);
 
@@ -54,5 +58,19 @@ float control_get_steer_kd(void);
 int16 control_get_v_target_l(void);    // 左轮目标速度
 int16 control_get_v_target_r(void);    // 右轮目标速度
 int16 control_get_delta(void);         // 转向PD输出（差速量）
+
+// ==================== 定角转向模式（陀螺仪 yaw 反馈） ====================
+// 串级结构不变：目标yaw - 当前yaw（环形差±180）→ 定角PD → 差速 → 速度PI
+// base=0 时左右轮反转，原地转向；base>0 时定角直线行驶
+void  control_set_yaw_target(float yaw);   // 'ya90'：设目标角(0~360°)并切入定角模式
+void  control_hold_yaw(void);              // 'yr'：锁定当前朝向为目标（直线保持）
+void  control_set_track_mode(void);        // 切回灰度循迹模式（'x' 停车时调用）
+uint8 control_get_mode(void);              // 0=灰度循迹  1=定角转向
+float control_get_yaw_target(void);        // 当前目标角（VOFA显示）
+float control_get_yaw_error(void);         // 角度误差 ±180°（VOFA显示）
+void  control_set_angle_kp(float kp);      // 定角PD调参（'ap'/'ad' 命令）
+void  control_set_angle_kd(float kd);
+float control_get_angle_kp(void);
+float control_get_angle_kd(void);
 
 #endif
